@@ -1,8 +1,7 @@
-// use regex::{Regex, RegexBuilder};
 use regex::RegexBuilder;
 use std::str;
 
-struct AT {
+struct ATParser {
     data: String,
     regex_echo: regex::Regex,
     regex_no_echo: regex::Regex,
@@ -18,9 +17,9 @@ struct AT {
 //             regex_test: RegexBuilder::new(r"(?P<at_command>AT.*)\n+(?P<result>(.*[\r\n]){1,})(?P<return_code>OK|CONNECT|RING|NO CARRIER|ERROR|NO DIALTONE|BUSY|NO ANSWER|ERROR1|.*ONGOING.*)[\r\n]").multi_line(true).build().unwrap(),
 
 
-impl AT {
+impl ATParser {
     pub fn new() -> Self {
-        AT {
+        ATParser {
             data: String::with_capacity(1024),
             regex_echo: RegexBuilder::new(r"(?P<at_command>AT.*)\n+(?P<result>(.*\n){0,})(?P<return_code>OK|CONNECT|RING|NO CARRIER|ERROR|NO DIALTONE|BUSY|NO ANSWER|ERROR1|.*ONGOING.*)\n").multi_line(true).build().unwrap(),
             regex_no_echo: RegexBuilder::new(r"(?P<result>(.*\n){0,})(?P<return_code>OK|CONNECT|RING|NO CARRIER|ERROR|NO DIALTONE|BUSY|NO ANSWER|ERROR1|.*ONGOING.*)\n").multi_line(true).build().unwrap(),
@@ -37,17 +36,19 @@ impl AT {
             if let Some(caps) = self.regex_echo.captures(&self.data) {
                 println!("captured echo {:?}", caps);
 
-                if let Some(x) = caps.name("at_command") {
-                    self.at_command = x.as_str().to_string();
+                if let Some(at_cmd) = caps.name("at_command") {
+                    self.at_command = at_cmd.as_str().to_string();
                 }
 
-                if let Some(x) = caps.name("result") {
-                    // TODO: remove only last \n
-                    self.result = x.as_str().to_string().replace("\n", "");
+                if let Some(result) = caps.name("result") {
+                    self.result = result.as_str().to_string();
+                    if self.result.ends_with("\n") {
+                        self.result = self.result[..self.result.len() - 1].to_string();
+                    }
                 }
 
-                if let Some(x) = caps.name("return_code") {
-                    self.return_code = x.as_str().to_string();
+                if let Some(rc) = caps.name("return_code") {
+                    self.return_code = rc.as_str().to_string();
                 }
 
                 return Some(caps);
@@ -99,7 +100,7 @@ mod tests {
 
     #[test]
     fn no_response() {
-        let mut dut = AT::new();
+        let mut dut = ATParser::new();
         let res = dut.process("");
         assert!(res.is_none());
         assert_eq!(dut.return_code(), "");
@@ -109,13 +110,13 @@ mod tests {
 
     #[test]
     fn empty_line() {
-        let mut dut = AT::new();
+        let mut dut = ATParser::new();
         let res = dut.process("\n\r");
         assert!(res.is_none());
         assert_eq!(dut.return_code(), "");
         assert_eq!(dut.result(), "");
 
-        let mut dut = AT::new();
+        let mut dut = ATParser::new();
         let res = dut.process("\n");
         assert!(res.is_none());
         assert_eq!(dut.return_code(), "");
@@ -124,22 +125,22 @@ mod tests {
 
     #[test]
     fn line_endings() {
-        let mut dut = AT::new();
+        let mut dut = ATParser::new();
         let res = dut.process("ATI\nTOBY-L210-03S-01\nOK\n");
         assert!(res.is_some());
         assert_eq!(dut.return_code(), "OK");
 
-        let mut dut = AT::new();
+        let mut dut = ATParser::new();
         let res = dut.process("ATI\rTOBY-L210-03S-01\rOK\r");
         assert!(res.is_some());
         assert_eq!(dut.return_code(), "OK");
 
-        let mut dut = AT::new();
+        let mut dut = ATParser::new();
         let res = dut.process("ATI\r\nTOBY-L210-03S-01\r\nOK\r\n");
         assert!(res.is_some());
         assert_eq!(dut.return_code(), "OK");
 
-        let mut dut = AT::new();
+        let mut dut = ATParser::new();
         let res = dut.process("ATI\n\rTOBY-L210-03S-01\n\rOK\n\r");
         assert!(res.is_some());
         assert_eq!(dut.return_code(), "OK");
@@ -147,7 +148,7 @@ mod tests {
 
     #[test]
     fn ati() {
-        let mut dut = AT::new();
+        let mut dut = ATParser::new();
         let res = dut.process("ATI\r\nTOBY-L210-03S-01\r\nOK\r\n");
         assert!(res.is_some());
         assert_eq!(dut.return_code(), "OK");
@@ -157,7 +158,7 @@ mod tests {
 
     #[test]
     fn ati_line_by_line() {
-        let mut dut = AT::new();
+        let mut dut = ATParser::new();
         let res = dut.process("ATI\r\n");
         assert!(res.is_none());
         let res = dut.process("TOBY-L210-03S-01\r\n");
@@ -171,7 +172,7 @@ mod tests {
 
     #[test]
     fn at_plus_ccid() {
-        let mut dut = AT::new();
+        let mut dut = ATParser::new();
         let res = dut.process("AT+CCID\r\n+CCID: 89882390000056327672\r\nOK\r\n");
         assert!(res.is_some());
         assert_eq!(dut.return_code(), "OK");
@@ -181,7 +182,7 @@ mod tests {
 
     #[test]
     fn at_plus_cfun() {
-        let mut dut = AT::new();
+        let mut dut = ATParser::new();
         let res = dut.process("AT+CFUN?\r\n+CFUN: 1,0\r\nOK\r\n");
         assert!(res.is_some());
         assert_eq!(dut.return_code(), "OK");
@@ -191,7 +192,7 @@ mod tests {
 
     #[test]
     fn at_plus_cgmi() {
-        let mut dut = AT::new();
+        let mut dut = ATParser::new();
         let res = dut.process("AT+CGMI\r\nu-blox\r\nOK\r\n");
         assert!(res.is_some());
         assert_eq!(dut.return_code(), "OK");
@@ -199,9 +200,19 @@ mod tests {
         assert_eq!(dut.result(), "u-blox");
     }
 
+
+    #[test]
+    fn at_plus_cnum_no_results() {
+        let mut dut = ATParser::new();
+        let res = dut.process("AT+CNUM\nOK\n");
+        assert!(res.is_some());
+        assert_eq!(dut.return_code(), "OK");
+        assert_eq!(dut.at_command(), "AT+CNUM");
+    }
+
     #[test]
     fn unknown_at_cmd_error() {
-        let mut dut = AT::new();
+        let mut dut = ATParser::new();
         let res = dut.process("ATunknown\r\nERROR\r\n");
         assert!(res.is_some());
         assert_eq!(dut.return_code(), "ERROR");
@@ -211,17 +222,17 @@ mod tests {
     /* TODO: not working as expected */
     #[test]
     fn multiple_results() {
-        let mut dut = AT::new();
+        let mut dut = ATParser::new();
         let res = dut.process("ATX\r\nLine1\r\nLine2\r\nOK\r\n");
         assert!(res.is_some());
         assert_eq!(dut.return_code(), "OK");
-        // assert_eq!(dut.result(), "16.19,A01.04");
+        assert_eq!(dut.result(), "Line1\nLine2");
         // TODO: Test result
     }
 
     #[test]
     fn ate0_echo_off() {
-        let mut dut = AT::new();
+        let mut dut = ATParser::new();
         let res = dut.process("ATE0\nOK\n");
         assert!(res.is_some());
         assert_eq!(dut.return_code(), "OK");
@@ -229,12 +240,20 @@ mod tests {
     }
 
     #[test]
-    fn ati9_no_echo() {
-        let mut dut = AT::new();
+    fn ati9_echo_off() {
+        let mut dut = ATParser::new();
         let res = dut.process("16.19,A01.04\nOK\n");
         assert!(res.is_some());
         assert_eq!(dut.return_code(), "OK");
         assert_eq!(dut.result(), "16.19,A01.04");
+    }
+
+    #[test]
+    fn echo_off_no_result() {
+        let mut dut = ATParser::new();
+        let res = dut.process("OK\n");
+        assert!(res.is_some());
+        assert_eq!(dut.return_code(), "OK");
     }
 }
 
@@ -244,23 +263,3 @@ mod tests {
 //    from then on response is guaranteed not to be interrupted
 // +/- echo
 //
-
-/* Samples
-
------
-AT+CSQ
-+CSQ: 31,3
-
-OK
-
------
-AT+CNUM
-OK
-
------
-AT+UCIND?
-+UCIND: 4095
-
-OK
------
-*/
